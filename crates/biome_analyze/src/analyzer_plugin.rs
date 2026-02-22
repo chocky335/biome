@@ -2,7 +2,7 @@ use biome_diagnostics::Applicability;
 use biome_rowan::{
     AnySyntaxNode, Language, RawSyntaxKind, SyntaxKind, SyntaxNode, TextRange, WalkEvent,
 };
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use rustc_hash::FxHashSet;
 use std::hash::Hash;
 use std::{fmt::Debug, sync::Arc};
@@ -53,6 +53,11 @@ pub trait AnalyzerPlugin: Debug + Send + Sync {
     fn query(&self) -> Vec<RawSyntaxKind>;
 
     fn evaluate(&self, node: AnySyntaxNode, path: Arc<Utf8PathBuf>) -> PluginEvalResult;
+
+    /// Returns true if this plugin should run on the given file path.
+    fn applies_to_file(&self, _path: &Utf8Path) -> bool {
+        true
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -68,6 +73,8 @@ pub struct PluginVisitor<L: Language> {
     query: FxHashSet<L::Kind>,
     plugin: Arc<Box<dyn AnalyzerPlugin>>,
     skip_subtree: Option<SyntaxNode<L>>,
+    /// Cached result of `applies_to_file` for the current file path.
+    applies_to_file: Option<bool>,
 }
 
 impl<L> PluginVisitor<L>
@@ -86,6 +93,7 @@ where
             query,
             plugin,
             skip_subtree: None,
+            applies_to_file: None,
         }
     }
 }
@@ -129,6 +137,13 @@ where
         // TODO: Integrate to [`VisitorContext::match_query`]?
         let kind = node.kind();
         if !self.query.contains(&kind) {
+            return;
+        }
+
+        let applies = *self
+            .applies_to_file
+            .get_or_insert_with(|| self.plugin.applies_to_file(&ctx.options.file_path));
+        if !applies {
             return;
         }
 
